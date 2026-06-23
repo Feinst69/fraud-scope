@@ -1,0 +1,13 @@
+{
+  "AUPRC_T1": 0.48733632645796154,
+  "AUPRC_T2": 0.44639350984276527,
+  "AUPRC_drop": 0.08401347158496314,
+  "AUPRC_drop_alert": false,
+  "score_mean_T1": 0.03545888885855675,
+  "score_mean_T2": 0.0380236953496933,
+  "score_mean_shift": 0.07233183830976486,
+  "score_shift_alert": false,
+  "max_PSI": 0.003298872731373738,
+  "PSI_alert": false,
+  "retraining_alert": false
+}

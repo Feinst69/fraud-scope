@@ -1,1 +1,28 @@
-/data
+# Donnees locales lourdes
+/data/
+
+# Artefacts MLflow locaux
+/mlartifacts/
+/mlruns/
+/mlflow.db
+
+# Rapports HTML generes localement
+/evidently_reports/
+
+# Notebooks / Python caches
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environnements locaux
+.venv/
+venv/
+env/
+.env
+
+# OS / editeurs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,11 @@
+{
+  "dataset_source": "pyg",
+  "num_nodes": 203769,
+  "num_edges_edge_index": 234355,
+  "num_features": 165,
+  "train_nodes": 27938,
+  "valid_nodes": 9313,
+  "test_nodes": 9313,
+  "best_model_by_AUPRC": "GCN",
+  "best_AUPRC": 0.20913747820365808
+}
