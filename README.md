@@ -74,6 +74,17 @@ Le meilleur modèle principal est **XGBoost baseline**.
 | XGBoost scale_pos_weight | 0.4525 | 0.0723 | 0.9252 | 0.1342 | 44.01 % |
 | Random undersampling | 0.4523 | 0.0787 | 0.8999 | 0.1448 | 39.33 % |
 
+### Compact vs Vxxx
+
+Le notebook `02_modelling.ipynb` compare aussi le modèle compact sans `Vxxx` avec une version `wide_selected_v` ajoutant 50 colonnes anonymisées.
+
+| Feature set | AUPRC | Recall | F1 | Gain AUPRC |
+|---|---:|---:|---:|---:|
+| compact | 0.4753 | 0.2904 | 0.4206 | 0.0000 |
+| wide_selected_v | 0.4734 | 0.2923 | 0.4250 | -0.0019 |
+
+Les `Vxxx` n'améliorent pas l'AUPRC dans ce run, mais restent une piste à tester avec une sélection plus robuste.
+
 ### Graph features NetworkX
 
 Sur un sous-graphe de 10 000 transactions, l'ajout de graph features améliore l'AUPRC :

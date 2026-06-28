@@ -73,6 +73,52 @@ Ces features sont pertinentes métier : elles capturent les rafales d'activité,
 
 Dans l'expérience compacte, leur gain sur l'AUPRC globale n'est pas massif. Cela ne signifie pas qu'elles sont inutiles : elles peuvent être importantes pour certains cas de fraude courts et pour l'explicabilité opérationnelle.
 
+## 5 bis. Pertinence des colonnes Vxxx anonymisees
+
+Les colonnes `Vxxx` sont anonymisees. Cela limite leur interpretation metier, mais elles restent pertinentes pour la prediction. Dans l'EDA, les plus fortes correlations avec `isFraud` sont principalement des `Vxxx`, ce qui indique qu'elles contiennent un signal fort.
+
+Les resultats XGBoost principaux ont ete produits en mode `compact`, donc sans `Vxxx`. Le notebook permet maintenant de relancer une version `wide_selected_v` pour mesurer proprement leur apport.
+
+Le choix recommande est progressif :
+
+| Usage | Decision |
+|---|---|
+| Rapport et explication metier | garder un modele compact plus lisible |
+| Recherche de performance | tester une selection des meilleures `Vxxx` |
+| Production | documenter ces colonnes comme signaux anonymises et surveiller leur drift |
+
+Je ne recommande pas d'ajouter toutes les `Vxxx` sans selection, car cela augmente la memoire, le temps d'entrainement et le risque de surapprentissage. Une selection de 20 a 50 colonnes `Vxxx` est un meilleur compromis.
+
+Le notebook `02_modelling.ipynb` contient maintenant un mode dedie :
+
+```python
+FEATURE_SET = "wide_selected_v"
+TOP_V_FEATURES = 50
+```
+
+Ce mode ajoute uniquement les meilleures colonnes `Vxxx`, selectionnees sur le train temporel.
+
+Un troisieme mode a aussi ete ajoute :
+
+```python
+FEATURE_SET = "wide_v_blocks"
+```
+
+Il utilise les `Vxxx` representatives par blocs redondants issues du notebook de reference `eda-for-columns-v-and-id.ipynb`.
+
+### Resultat de la comparaison compact vs Vxxx
+
+Une comparaison directe a ete ajoutee dans `02_modelling.ipynb`.
+
+| Feature set | Features | Vxxx | AUPRC | Recall@0.5 | F1@0.5 | Temps train | Gain AUPRC |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| compact | 59 | 0 | 0.4753 | 0.2904 | 0.4206 | 13.98s | 0.0000 |
+| wide_selected_v | 109 | 50 | 0.4734 | 0.2923 | 0.4250 | 24.15s | -0.0019 |
+
+![Comparaison compact vs Vxxx](assets/02_compact_vs_vxxx_comparison.png)
+
+Conclusion : dans ce run, les `Vxxx` n'ameliorent pas l'AUPRC. Elles ameliorent tres legerement le recall et le F1 au seuil 0.5, mais elles rendent l'entrainement plus long. Le modele compact reste donc la reference principale pour le rapport final.
+
 ## 6. Explicabilité SHAP
 
 SHAP a été utilisé pour expliquer le meilleur modèle XGBoost. Les livrables produits sont :
@@ -129,6 +175,8 @@ Conclusion monitoring : la performance baisse légèrement, mais pas assez pour 
 ## 9. Graph features avec NetworkX
 
 Un graphe biparti a été construit sur **10 000 transactions** :
+
+Le graphe biparti repose sur des proxys car le dataset ne fournit pas de vrai identifiant client ou marchand. `customer_proxy` combine `card1`, `card2`, `card3`, `card5` et `addr1`. `merchant_proxy` combine `ProductCD` et `R_emaildomain`. Ces proxys sont acceptables pour un POC, mais ils devront etre remplaces par de vrais identifiants tokenises en production.
 
 - nœuds clients : `customer_proxy` ;
 - nœuds marchands : `merchant_proxy` ;

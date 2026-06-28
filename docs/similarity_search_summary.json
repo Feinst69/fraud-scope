@@ -1,0 +1,12 @@
+{
+  "query_transaction_id": 3504601,
+  "query_score": 0.9851568937301636,
+  "neighbors_count": 5,
+  "neighbor_fraud_rate": 1.0,
+  "same_product_rate": 1.0,
+  "same_card6_rate": 1.0,
+  "same_device_rate": 0.6,
+  "indexed_history_rows": 50000,
+  "embedding_type": "SHAP values from compact XGBoost",
+  "qdrant_collection": "fraud_transactions_shap"
+}

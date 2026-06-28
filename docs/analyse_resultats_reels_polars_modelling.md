@@ -151,6 +151,32 @@ Analyse : les colonnes `Vxxx` contiennent clairement du signal predictif. Le mod
 
 Mon avis : pour eviter les problemes memoire, le mode compact est raisonnable. Mais pour viser une meilleure performance finale, il faudra reintegrer une selection limitee des meilleures `Vxxx`, par exemple les 20 a 50 variables les plus correlees ou les plus importantes selon XGBoost.
 
+### Faut-il utiliser les colonnes Vxxx ?
+
+Oui, il est pertinent de les tester, meme si elles sont anonymisees.
+
+Le fait qu'une variable soit anonymisee signifie qu'on ne connait pas son interpretation metier exacte. Cela limite l'explication fonctionnelle, mais pas son utilite predictive. Dans ce dataset, les plus fortes correlations avec `isFraud` sont justement des colonnes `Vxxx`, par exemple `V257`, `V246`, `V244` et `V242`.
+
+La recommandation est donc de separer deux objectifs :
+
+| Objectif | Choix recommande |
+|---|---|
+| Comprendre et expliquer le modele | Mode compact, avec variables metier lisibles |
+| Maximiser la performance predictive | Ajouter une selection limitee de `Vxxx` |
+| Eviter les crashes memoire | Ne pas prendre les 339 `Vxxx` d'un coup |
+| Garder un modele presentable | Expliquer les `Vxxx` comme signaux anonymises, pas comme causes metier |
+
+Pour la suite, je recommande de tester un mode `wide_selected_v` avec les **20 a 50 meilleures colonnes `Vxxx`**, choisies par correlation avec `isFraud`, importance XGBoost ou taux de valeurs manquantes acceptable. Cela permettrait de mesurer le gain d'AUPRC sans transformer le notebook en modele trop lourd.
+
+Ce mode a ete ajoute dans `notebooks/02_modelling.ipynb`. Pour le lancer, il suffit de modifier la cellule de configuration :
+
+```python
+FEATURE_SET = "wide_selected_v"
+TOP_V_FEATURES = 50
+```
+
+La selection des `Vxxx` est faite uniquement sur la periode train temporelle, pas sur la validation, afin d'eviter une fuite d'information.
+
 ## 6. Baseline logistique de l'EDA
 
 La regression logistique naive donne :
@@ -190,6 +216,24 @@ Le notebook de modelisation contient maintenant les vraies fenetres demandees da
 | `customer_tx_count_prev_7d` | nombre de transactions du meme client dans les 7 jours precedents |
 | `customer_amt_sum_prev_7d` | montant cumule du meme client dans les 7 jours precedents |
 
+### Construction du proxy client
+
+IEEE-CIS ne fournit pas de vrai identifiant client stable. Pour calculer des features d'historique, le projet construit donc un **proxy client** avec plusieurs champs transactionnels relativement stables :
+
+```text
+customer_proxy = card1 + card2 + card3 + card5 + addr1
+```
+
+L'idee est de regrouper des transactions qui ressemblent au meme client ou au meme moyen de paiement. Ce n'est pas parfait : deux clients peuvent partager certaines valeurs, et un meme client peut changer de carte ou d'adresse. Mais pour un POC, ce proxy permet de calculer des signaux utiles : nombre de transactions precedentes, moyenne historique, nouveaux marchands, fenetres 1h/24h/7j.
+
+Le projet construit aussi un **proxy marchand** :
+
+```text
+merchant_proxy = ProductCD + R_emaildomain
+```
+
+Il ne s'agit pas d'un vrai `merchant_id`, mais d'une approximation permettant de detecter si un client a deja interagi avec un type de marchand ou domaine receveur similaire.
+
 Ces features sont calculees par `customer_proxy` et utilisent uniquement les transactions precedentes. Le notebook relance confirme :
 
 | Element | Avant | Apres fenetres |
@@ -204,149 +248,225 @@ Mon avis : c'est necessaire pour le cahier des charges, mais dans ce run compact
 
 ## 8. Resultats XGBoost et resampling apres ajout des fenetres
 
-Le notebook modelling utilise le mode compact :
+### Distinction entre les runs sans Vxxx et avec Vxxx
 
-- 59 features au total ;
-- 34 numeriques de base ;
-- 15 categorielles ;
-- 10 features comportementales et temporelles ;
-- train limite a 150 000 lignes pour les strategies de resampling ;
-- `scale_pos_weight = 27.46`.
+Le dernier run du notebook `02_modelling.ipynb` a ete execute avec le mode principal **`compact`**. Cela signifie que le modele principal utilise les variables metier, temporelles et comportementales, mais **aucune colonne anonymisee `Vxxx`**.
 
-### Tableau comparatif
+Dans le notebook, la distinction est maintenant explicite :
 
-| Strategie | AUPRC | Precision@0.5 | Recall@0.5 | F1@0.5 | Taux alertes | Temps train |
-|---|---:|---:|---:|---:|---:|---:|
-| xgboost_baseline | 0.4777 | 0.7737 | 0.2886 | 0.4204 | 1.28 % | 5.53 s |
-| xgboost_scale_pos_weight | 0.4514 | 0.1545 | 0.7510 | 0.2563 | 16.72 % | 3.93 s |
-| random_undersampling | 0.4483 | 0.1605 | 0.7517 | 0.2646 | 16.11 % | 0.74 s |
-| smoteenn | 0.4112 | 0.3672 | 0.4550 | 0.4064 | 4.26 % | 104.27 s |
-| smote | 0.3985 | 0.3558 | 0.4163 | 0.3837 | 4.03 % | 4.98 s |
+| Mode | Colonnes `Vxxx` | Role |
+|---|---:|---|
+| `compact` | 0 | modele lisible, rapide, reference principale |
+| `wide_selected_v` | 50 | test controle de l'apport des meilleures `Vxxx` par correlation train |
+| `wide_v_blocks` | 128 possibles | mode optionnel base sur des blocs de `Vxxx`, non relance dans ce dernier run pour eviter les crashes memoire |
+| `wide` | beaucoup | test large, trop lourd pour le notebook courant |
+
+Le modele compact utilise :
+
+- **59 features** au total ;
+- **0 colonne `Vxxx`** ;
+- **34 features numeriques** ;
+- **15 features categorielles** ;
+- **10 features engineered**, dont les fenetres 1h, 24h et 7 jours ;
+- split temporel : train jours **1 -> 141**, validation jours **141 -> 182**.
+
+| Split | Lignes | Features | Taux fraude |
+|---|---:|---:|---:|
+| Train | 472 432 | 59 | 3.5135 % |
+| Validation | 118 108 | 59 | 3.4409 % |
+
+### Resultat reel compact vs wide_selected_v
+
+La comparaison directe lancee dans le notebook oppose :
+
+- `compact` : 59 features, **0 `Vxxx`** ;
+- `wide_selected_v` : 109 features, dont **50 `Vxxx`** selectionnees sur le train temporel.
+
+| Feature set | Features | Vxxx | AUPRC | Precision@0.5 | Recall@0.5 | F1@0.5 | Taux alertes | Temps train | Gain AUPRC |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| compact | 59 | 0 | 0.4753 | 0.7628 | 0.2904 | 0.4206 | 1.31 % | 26.98 s | 0.0000 |
+| wide_selected_v | 109 | 50 | 0.4734 | 0.7780 | 0.2923 | 0.4250 | 1.29 % | 46.72 s | -0.0019 |
+
+![Comparaison compact vs Vxxx](assets/02_compact_vs_vxxx_comparison.png)
+
+Les premieres `Vxxx` selectionnees sont : `V257`, `V244`, `V242`, `V246`, `V233`, `V201`, `V200`, `V188`, `V189`, `V232`.
+
+Analyse : les `Vxxx` ont bien un signal individuel dans l'EDA, mais dans ce test controle elles **n'ameliorent pas l'AUPRC**. Le score passe de **0.4753** a **0.4734**. Le F1 au seuil 0.5 augmente legerement, de **0.4206** a **0.4250**, mais le gain est trop faible pour justifier la complexite supplementaire.
+
+Mon interpretation : le top 50 par correlation n'est pas forcement la meilleure facon de choisir des variables pour XGBoost. Plusieurs `Vxxx` sont tres manquantes, et une partie du signal peut deja etre captee par les variables `C`, `D`, carte, email et features temporelles. Pour le rapport final, il faut donc presenter les `Vxxx` comme une piste testee, mais pas comme une amelioration prouvee sur ce run.
+
+## 9. Comparaison des strategies de modelisation
+
+Les strategies XGBoost et resampling ont ete relancees sur le mode compact. Les resultats sont :
+
+| Strategie | AUPRC | Precision@0.5 | Recall@0.5 | F1@0.5 | Taux alertes | Temps train | Lignes apres sampling |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| xgboost_baseline | 0.4753 | 0.7628 | 0.2904 | 0.4206 | 1.31 % | 5.83 s | 472 432 |
+| xgboost_scale_pos_weight | 0.4525 | 0.1585 | 0.7576 | 0.2621 | 16.45 % | 5.31 s | 472 432 |
+| random_undersampling | 0.4523 | 0.1654 | 0.7544 | 0.2713 | 15.70 % | 1.12 s | 11 278 |
+| smoteenn | 0.4265 | 0.4097 | 0.4481 | 0.4280 | 3.76 % | 123.26 s | 268 243 |
+| smote | 0.4137 | 0.4245 | 0.4240 | 0.4242 | 3.44 % | 5.97 s | 288 722 |
 
 ![Comparaison des strategies](assets/02_model_strategy_comparison.png)
 
-### Lecture des resultats
+Lecture : **xgboost_baseline** reste le meilleur modele en AUPRC. Les methodes de reequilibrage augmentent le recall, mais au prix d'un volume d'alertes beaucoup plus eleve ou d'une AUPRC plus faible.
 
-Le meilleur modele en AUPRC reste **xgboost_baseline**, avec **0.4777**. C'est aussi le meilleur F1 au seuil 0.5 avec **0.4204**.
+Les deux cas les plus parlants :
 
-Par rapport au run precedent sans fenetres explicites, l'AUPRC de la baseline baisse legerement de **0.4827** a **0.4777**. Le recall au seuil 0.5 passe de **0.2913** a **0.2886**. L'ajout des fenetres ne produit donc pas de gain mesurable dans cette configuration compacte.
+- `scale_pos_weight` detecte **75.76 %** des fraudes, mais alerte **16.45 %** des transactions ;
+- `random_undersampling` a un comportement similaire, avec **75.44 %** de recall et **15.70 %** d'alertes.
 
-Les strategies `scale_pos_weight` et `random_undersampling` augmentent fortement le recall, autour de 75 %, mais elles declenchent environ 16 % d'alertes. C'est probablement trop eleve pour un systeme operationnel si chaque alerte doit etre traitee par un analyste.
-
-SMOTE et SMOTEENN sont plus raisonnables en taux d'alertes, mais leur AUPRC est inferieure a la baseline. SMOTEENN reste tres couteux, avec plus de 100 secondes d'entrainement, sans gain de performance.
+Mon avis : ces strategies sont utiles pour montrer le compromis recall / charge operationnelle, mais elles ne sont pas les meilleures candidates pour une mise en production. Le modele baseline donne un meilleur ranking global, ce que mesure l'AUPRC.
 
 ![Courbes Precision-Recall](assets/02_precision_recall_curves.png)
 
-Mon avis : les fenetres temporelles sont importantes pour satisfaire le sujet et pour capturer la velocite transactionnelle. Mais dans les resultats actuels, elles ne suffisent pas a ameliorer XGBoost compact. Je garderais ces features, puis je testerais une version avec les meilleures colonnes `Vxxx` et un tuning XGBoost plus propre.
+## 10. Meilleur modele non tune : matrice de confusion
 
-## 9. Meilleur modele : matrice de confusion
+Le meilleur modele non tune par AUPRC est `xgboost_baseline`.
 
-Le meilleur modele par AUPRC reste `xgboost_baseline`.
-
-Matrice de confusion au seuil 0.5 :
+Au seuil 0.5, la matrice de confusion est :
 
 |  | Pred legitime | Pred fraude |
 |---|---:|---:|
-| Vrai legitime | 113 701 | 343 |
-| Vrai fraude | 2 891 | 1 173 |
+| Vrai legitime | 113 677 | 367 |
+| Vrai fraude | 2 884 | 1 180 |
 
 Cela donne :
 
-- vrais positifs fraude : 1 173 ;
-- faux negatifs fraude : 2 891 ;
-- faux positifs : 343 ;
-- recall fraude : 28.86 % ;
-- precision fraude : 77.37 %.
+- vrais positifs fraude : **1 180** ;
+- faux negatifs fraude : **2 884** ;
+- faux positifs : **367** ;
+- recall fraude : **29.04 %** ;
+- precision fraude : **76.28 %**.
 
 ![Matrice de confusion XGBoost baseline](assets/02_confusion_matrix_xgboost_baseline.png)
 
-Analyse : au seuil 0.5, le modele est prudent. Quand il alerte, il se trompe peu, mais il laisse passer beaucoup de fraudes.
+Analyse : au seuil 0.5, le modele est prudent. Il bloque peu de transactions, et quand il bloque il est souvent correct, mais il laisse passer environ 71 % des fraudes.
 
-Mon avis : ce modele est bon comme score de risque, mais le seuil 0.5 est trop conservateur si l'objectif est de reduire fortement les chargebacks.
-
-## 10. Analyse du seuil
+## 11. Analyse du seuil
 
 Pour `xgboost_baseline`, le seuil change fortement le compromis precision / recall.
 
 | Seuil | Precision | Recall | F1 | Taux alertes | Alertes |
 |---:|---:|---:|---:|---:|---:|
-| 0.05 | 0.1721 | 0.7333 | 0.2788 | 14.66 % | 17 317 |
-| 0.10 | 0.3184 | 0.5832 | 0.4119 | 6.30 % | 7 443 |
-| 0.15 | 0.4296 | 0.5084 | 0.4657 | 4.07 % | 4 809 |
-| 0.20 | 0.5151 | 0.4537 | 0.4825 | 3.03 % | 3 580 |
-| 0.25 | 0.5776 | 0.4158 | 0.4835 | 2.48 % | 2 926 |
-| 0.30 | 0.6418 | 0.3875 | 0.4833 | 2.08 % | 2 454 |
-| 0.50 | 0.7737 | 0.2886 | 0.4204 | 1.28 % | 1 516 |
-
-Le F1 est maximal autour de **0.25-0.30**. Le seuil 0.25 detecte **41.58 %** des fraudes avec une precision de **57.76 %** et un taux d'alertes de **2.48 %**.
+| 0.05 | 0.1738 | 0.7315 | 0.2808 | 14.49 % | 17 109 |
+| 0.10 | 0.3156 | 0.5898 | 0.4112 | 6.43 % | 7 595 |
+| 0.15 | 0.4234 | 0.5076 | 0.4617 | 4.13 % | 4 873 |
+| 0.20 | 0.5070 | 0.4545 | 0.4793 | 3.08 % | 3 643 |
+| 0.25 | 0.5843 | 0.4129 | 0.4839 | 2.43 % | 2 872 |
+| 0.30 | 0.6373 | 0.3895 | 0.4835 | 2.10 % | 2 484 |
+| 0.50 | 0.7628 | 0.2904 | 0.4206 | 1.31 % | 1 547 |
 
 ![Impact du seuil](assets/02_threshold_impact_xgboost_baseline.png)
 
-Analyse : le seuil 0.25 est un meilleur compromis que 0.5. Il augmente nettement le recall tout en gardant un volume d'alertes encore raisonnable.
+Analyse : le meilleur F1 se situe autour de **0.25-0.30**. Le seuil **0.25** semble etre un bon compromis operationnel : il detecte **41.29 %** des fraudes, avec **58.43 %** de precision et seulement **2.43 %** de transactions envoyees en alerte.
 
-Mon avis : si PayTrack a une capacite analyste suffisante, je recommanderais de demarrer autour d'un seuil **0.20 a 0.25**, pas 0.5. Si la priorite est de limiter fortement les faux positifs, alors 0.5 reste defensible mais manque trop de fraudes.
+Mon avis : PayTrack ne devrait pas utiliser le seuil 0.5 par defaut. Il est trop conservateur. Un seuil autour de **0.20 a 0.25** est plus defendable si l'objectif est de bloquer davantage de fraudes sans saturer les analystes.
 
-## 11. Recommandation finale
+## 12. Hypertuning XGBoost avec Optuna
 
-Sur les resultats actuels, je recommande :
+Le notebook contient maintenant une section de tuning avec **Optuna**. Elle cherche de meilleurs hyperparametres XGBoost sur le split temporel, avec l'AUPRC comme objectif.
 
-> **XGBoost baseline compact avec features temporelles 1h/24h/7j conservees, et seuil ajuste autour de 0.20-0.25.**
+Configuration executee :
 
-Raison :
+- **25 essais Optuna** ;
+- objectif : maximiser l'AUPRC validation ;
+- modele tune uniquement sur le feature set compact ;
+- temps total tuning : **310.3 secondes**.
 
-- meilleure AUPRC globale : 0.4777 ;
-- meilleur F1 parmi les strategies testees au seuil 0.5 ;
-- precision elevee au seuil 0.5 ;
-- courbe Precision-Recall meilleure que les autres strategies sur une grande partie des recalls utiles ;
-- seuil ajustable pour obtenir plus de recall sans utiliser de resampling complexe ;
-- les features 1h/24h/7j repondent au cahier des charges meme si elles n'ameliorent pas encore les scores.
+Meilleurs hyperparametres trouves :
 
-Je ne recommande pas `scale_pos_weight` tel quel au seuil 0.5, meme si son recall est fort, car il alerte **16.72 %** des transactions. Pour 118 108 transactions de validation, cela represente environ 19 750 alertes. C'est probablement trop pour une equipe d'analystes.
+| Parametre | Valeur |
+|---|---:|
+| `n_estimators` | 292 |
+| `max_depth` | 8 |
+| `learning_rate` | 0.0852 |
+| `subsample` | 0.9963 |
+| `colsample_bytree` | 0.9308 |
+| `min_child_weight` | 5 |
+| `gamma` | 1.1792 |
+| `reg_alpha` | 0.000000455 |
+| `reg_lambda` | 0.0146 |
 
-Je ne recommande pas SMOTEENN : il est lent et n'ameliore pas l'AUPRC.
+La comparaison baseline vs modele tune est nette :
 
-## 12. Limites et ameliorations
+| Modele | AUPRC | Precision@0.5 | Recall@0.5 | F1@0.5 | Taux alertes | Temps train | Gain AUPRC |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| xgboost_baseline | 0.4753 | 0.7628 | 0.2904 | 0.4206 | 1.31 % | 5.83 s | 0.0000 |
+| xgboost_optuna_tuned | 0.5424 | 0.7721 | 0.3634 | 0.4942 | 1.62 % | 12.74 s | +0.0671 |
 
-Les resultats sont bons pour une premiere version, mais il y a quatre limites importantes.
+![Comparaison tuning Optuna](assets/02_xgboost_optuna_tuning_comparison.png)
 
-### 1. Mode compact
+Analyse : c'est le gain le plus important observe dans ce notebook. L'AUPRC augmente de **0.4753 a 0.5424**, soit **+0.0671**. Le recall au seuil 0.5 passe de **29.04 %** a **36.34 %**, avec une precision legerement meilleure et un taux d'alertes encore bas (**1.62 %**).
 
-Le modele exclut les colonnes `Vxxx`, alors que l'EDA montre que plusieurs d'entre elles sont fortement correlees avec la fraude. Il faut tester une version intermediaire : compact + top 30 ou top 50 `Vxxx`.
+Mon avis : le tuning apporte plus que l'ajout simple des `Vxxx`. Pour la version finale du modele tabulaire, le meilleur candidat devient donc **XGBoost compact tune avec Optuna**.
 
-### 2. Fenetres temporelles
+## 13. Recommandation finale pour la partie modelisation
 
-Les fenetres 1h/24h/7j sont maintenant implementees, mais elles n'ameliorent pas le score dans ce run. Cela peut venir de plusieurs causes :
+Sur les resultats reels du notebook, je recommande :
 
-- le `customer_proxy` est une approximation imparfaite ;
-- les fenetres sont redondantes avec les compteurs `C*` ou les variables `D*` ;
-- XGBoost n'est pas encore tune ;
-- le mode compact retire des variables qui interagiraient avec ces fenetres.
+> **XGBoost compact tune avec Optuna, avec features temporelles 1h/24h/7j conservees, puis choix du seuil selon la capacite analyste.**
 
-Conclusion : il faut garder ces features pour le cahier des charges, mais ne pas les presenter comme un gain de performance tant qu'un test plus pousse ne le demontre pas.
+Pourquoi :
 
-### 3. Seuil metier
+- meilleure AUPRC observee dans le notebook : **0.5424** ;
+- gain important vs baseline non tune : **+0.0671 AUPRC** ;
+- recall au seuil 0.5 ameliore : **36.34 %** contre **29.04 %** ;
+- precision toujours elevee : **77.21 %** ;
+- taux d'alertes raisonnable : **1.62 %** au seuil 0.5 ;
+- modele plus lisible et plus stable que les variantes avec beaucoup de `Vxxx`.
 
-Le seuil optimal ne doit pas etre choisi uniquement par F1. Il doit dependre :
+La recommandation operationnelle reste de ne pas choisir le seuil uniquement avec 0.5. Pour le modele non tune, le seuil **0.25** donnait deja un bon compromis. Il faudra refaire la meme analyse de seuil sur le modele Optuna tune avant de figer une politique de blocage.
 
-- du cout moyen d'un faux negatif ;
+## 14. Limites et ameliorations
+
+### 1. Les Vxxx ne sont pas encore gagnantes dans ce test
+
+Les `Vxxx` sont correlees a la fraude, mais `wide_selected_v` ne gagne pas en AUPRC. Il ne faut donc pas affirmer que les variables anonymisees ameliorent le modele final. La conclusion correcte est : elles contiennent du signal, mais la selection top correlation n'a pas suffi.
+
+Amelioration possible : selectionner les `Vxxx` par importance XGBoost, SHAP, permutation importance, ou tester un petit nombre comme 10, 20 ou 30.
+
+### 2. Le mode wide_v_blocks reste optionnel
+
+Le notebook contient le mode `wide_v_blocks`, mais il n'a pas ete relance dans le dernier run complet pour eviter les crashes memoire. Il peut etre presente comme une piste inspiree des notebooks de reference, mais pas comme un resultat final valide.
+
+### 3. Les fenetres temporelles sont utiles pour le cahier des charges
+
+Les features 1h, 24h et 7 jours sont bien implementees. Elles ne prouvent pas seules un gain de performance dans le modele compact non tune, mais elles apportent une logique metier importante : velocite transactionnelle, intensite recente et comportement client.
+
+### 4. Le seuil metier reste a calibrer
+
+Le seuil doit dependre :
+
+- du cout moyen d'une fraude non bloquee ;
 - du cout d'un faux positif ;
 - de la capacite journaliere des analystes ;
 - du niveau de friction client acceptable.
 
-### 4. Identifiant client approximatif
+### 5. Le proxy client reste approximatif
 
-Le `customer_proxy` n'est pas un vrai identifiant client. Les features de velocite sont donc utiles pour le POC, mais il faudra un vrai identifiant client ou compte en production.
+Le projet utilise :
 
-## 13. Conclusion CDO
+```text
+customer_proxy = card1 + card2 + card3 + card5 + addr1
+```
 
-Le modele ML fait mieux qu'une baseline naive : la regression logistique avait une AUPRC de **0.2269**, alors que XGBoost baseline atteint **0.4777** avec les features temporelles 1h/24h/7j.
+Ce proxy est utile pour le POC, mais il ne remplace pas un vrai identifiant client en production. Avec un vrai `customer_id`, les features de velocite seraient plus fiables.
 
-Le modele XGBoost baseline est le meilleur candidat actuel. Il ne faut cependant pas le deployer avec le seuil par defaut 0.5 sans discussion metier. Le seuil **0.20-0.25** semble plus pertinent si PayTrack veut detecter davantage de fraudes tout en gardant un taux d'alertes raisonnable.
+## 15. Conclusion CDO
 
-La prochaine etape doit etre :
+Le projet montre clairement qu'un modele ML apporte de la valeur par rapport aux baselines simples :
 
-1. tester XGBoost avec une selection de colonnes `Vxxx` ;
-2. ajouter SHAP pour expliquer les decisions ;
-3. logger les runs dans MLflow ;
-4. surveiller drift et degradation via Evidently ;
-5. definir un seuil d'alerte avec les contraintes operationnelles de PayTrack.
+- regression logistique EDA : **AUPRC 0.2269** ;
+- XGBoost compact non tune : **AUPRC 0.4753** ;
+- XGBoost compact tune Optuna : **AUPRC 0.5424**.
+
+La meilleure option actuelle est donc **XGBoost compact tune avec Optuna**. Les `Vxxx` ont ete testees de maniere controlee et ne donnent pas de gain d'AUPRC dans ce run. Le modele compact reste plus explicable, plus leger et plus robuste pour la presentation.
+
+Pour deployer proprement, il faut ensuite :
+
+1. logger le modele tune dans MLflow ;
+2. refaire l'analyse de seuil sur le modele tune ;
+3. utiliser SHAP pour expliquer les decisions aux analystes ;
+4. surveiller drift et performance ;
+5. eventuellement retester une selection plus intelligente de `Vxxx`.

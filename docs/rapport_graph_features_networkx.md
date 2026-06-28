@@ -31,6 +31,28 @@ Résultats du graphe :
 
 Le graphe est biparti : les nœuds `customer_proxy` représentent les clients, les nœuds `merchant_proxy` représentent les marchands, et chaque arête correspond à une ou plusieurs transactions entre un client et un marchand.
 
+## Construction des proxys client et marchand
+
+Le dataset IEEE-CIS ne contient pas de vrai identifiant client ni de vrai identifiant marchand. Pour construire un graphe exploitable, le notebook utilise donc deux identifiants approximatifs.
+
+Le nœud client est construit ainsi :
+
+```text
+customer_proxy = card1 + card2 + card3 + card5 + addr1
+```
+
+Ces champs décrivent une combinaison carte/adresse. L'hypothèse est que deux transactions avec la même combinaison ont de bonnes chances d'appartenir au même client ou au même moyen de paiement.
+
+Le nœud marchand est construit ainsi :
+
+```text
+merchant_proxy = ProductCD + R_emaildomain
+```
+
+Ce proxy marchand est plus faible qu'un vrai `merchant_id`, mais il donne une approximation du contexte marchand ou receveur.
+
+Limite importante : ces proxys peuvent fusionner des entités différentes ou séparer une même entité en plusieurs nœuds. Les features graphe sont donc utiles pour un POC, mais en production il faudrait remplacer ces proxys par de vrais identifiants compte, carte tokenisée et marchand.
+
 ## Visualisation
 
 La visualisation sauvegardée montre la structure du graphe et met en évidence les nœuds liés à au moins une fraude.

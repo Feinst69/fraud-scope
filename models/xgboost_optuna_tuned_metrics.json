@@ -1,0 +1,21 @@
+{
+  "strategy": "xgboost_optuna_tuned",
+  "AUPRC": 0.5424236645393824,
+  "precision@0.5": 0.7720857292211186,
+  "recall@0.5": 0.36343503937007876,
+  "F1@0.5": 0.49422787351514136,
+  "predicted_positive_rate": 0.016197039997290615,
+  "true_fraud_rate": 0.034409184813899145,
+  "optuna_best_params": {
+    "n_estimators": 292,
+    "max_depth": 8,
+    "learning_rate": 0.08515747724292518,
+    "subsample": 0.9963094845259302,
+    "colsample_bytree": 0.9308164708511706,
+    "min_child_weight": 5,
+    "gamma": 1.179197341302329,
+    "reg_alpha": 4.552759865547368e-07,
+    "reg_lambda": 0.014595367488846333
+  },
+  "optuna_best_value": 0.5424236645393824
+}
